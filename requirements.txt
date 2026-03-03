@@ -1,0 +1,6 @@
+undetected-chromedriver
+selenium
+setuptools
+streamlit
+pandas
+plotly
