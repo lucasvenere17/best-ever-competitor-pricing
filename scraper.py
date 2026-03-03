@@ -41,6 +41,23 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
+# Keywords that indicate a product is a tool/appliance (not a hair care product)
+SKIP_KEYWORDS = ["curling iron", "flat iron", "blow dryer", "curling wand", "hair clipper", "hair trimmer"]
+
+# URL fragments to verify a product belongs to the brand being scraped.
+# The site sometimes shows "recommended" products from other brands on the page.
+BRAND_URL_KEYWORDS = {
+    "Monday": ["monday"],
+    "Maui": ["maui"],
+    "Native": ["native"],
+    "Kristin Ess": ["kristin-ess"],
+    "OGX": ["ogx", "organix"],
+    "Marc Anthony": ["marc-anthony"],
+    "John Frieda": ["john-frieda"],
+    "Nexxus": ["nexxus"],
+    "L'Oreal Ever": ["l-oreal", "loreal"],
+}
+
 # ---------------------------------------------------------------------------
 # CSS selectors — site uses Chakra UI with data-testid attributes
 # ---------------------------------------------------------------------------
@@ -249,11 +266,21 @@ def scrape_brand(driver, brand_name: str, brand_code: str) -> int:
                 if not name:
                     continue  # skip cards with no product title
 
+                # Skip tools and appliances
+                name_lower = name.lower()
+                if any(kw in name_lower for kw in SKIP_KEYWORDS):
+                    continue
+
                 href = find_one_attr(card, LINK_SELECTORS, "href", cache_key="product_link")
                 if href and not href.startswith("http"):
                     href = BASE_URL + href
                 if not href:
                     href = f"{driver.current_url}#product-{hash(name)}"
+
+                # Skip products that don't belong to this brand (recommended/trending items)
+                url_keywords = BRAND_URL_KEYWORDS.get(brand_name, [])
+                if url_keywords and not any(kw in href.lower() for kw in url_keywords):
+                    continue
 
                 # Skip if we've already seen this product (duplicate page)
                 if href in seen_urls:
