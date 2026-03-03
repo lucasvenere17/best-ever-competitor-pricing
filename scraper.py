@@ -58,6 +58,7 @@ PRICE_SELECTORS = [
 ]
 
 REGULAR_PRICE_SELECTORS = [
+    "[data-testid='was-price']",
     "p[style*='line-through']",
     "span[style*='line-through']",
 ]
@@ -65,6 +66,16 @@ REGULAR_PRICE_SELECTORS = [
 LINK_SELECTORS = [
     "a.chakra-linkbox__overlay",
     "a[href*='/p/']",
+]
+
+IMAGE_SELECTORS = [
+    "[data-testid='product-image'] img",
+    ".chakra-linkbox img",
+    "img[src*='product']",
+]
+
+SIZE_SELECTORS = [
+    "[data-testid='product-package-size']",
 ]
 
 _selector_cache: dict[str, str] = {}
@@ -264,14 +275,18 @@ def scrape_brand(driver, brand_name: str, brand_code: str) -> int:
                 else:
                     regular_price = price
 
+                image_url = find_one_attr(card, IMAGE_SELECTORS, "src", cache_key="product_image")
+
+                package_size = find_one_text(card, SIZE_SELECTORS, cache_key="product_size")
                 full_text = card.text or ""
-                size = extract_size(name) or extract_size(full_text)
+                size = package_size or extract_size(name) or extract_size(full_text)
 
                 product_id = upsert_product(
                     brand=brand_name,
                     product_name=name,
                     url=href,
                     size=size,
+                    image_url=image_url,
                 )
                 insert_price(
                     product_id=product_id,

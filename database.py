@@ -70,11 +70,17 @@ def init_db():
     cur.execute("CREATE INDEX IF NOT EXISTS idx_price_history_product ON price_history(product_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_price_history_date ON price_history(date_scraped)")
 
+    # Migration: add image_url column if it doesn't exist yet
+    try:
+        cur.execute("ALTER TABLE products ADD COLUMN image_url TEXT")
+    except sqlite3.OperationalError:
+        pass  # column already exists
+
     conn.commit()
     conn.close()
 
 
-def upsert_product(brand: str, product_name: str, url: str, size: str = None, category: str = None) -> int:
+def upsert_product(brand: str, product_name: str, url: str, size: str = None, category: str = None, image_url: str = None) -> int:
     """Insert a new product or update last_seen if it already exists.
 
     Returns the product id.
@@ -93,13 +99,13 @@ def upsert_product(brand: str, product_name: str, url: str, size: str = None, ca
     if row:
         product_id = row["id"]
         cur.execute(
-            "UPDATE products SET last_seen = ?, size = COALESCE(?, size), category = COALESCE(?, category) WHERE id = ?",
-            (now, size, category, product_id),
+            "UPDATE products SET last_seen = ?, size = COALESCE(?, size), category = COALESCE(?, category), image_url = COALESCE(?, image_url) WHERE id = ?",
+            (now, size, category, image_url, product_id),
         )
     else:
         cur.execute(
-            "INSERT INTO products (brand, product_name, size, url, category, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (brand, product_name, size, url, category, now, now),
+            "INSERT INTO products (brand, product_name, size, url, category, image_url, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (brand, product_name, size, url, category, image_url, now, now),
         )
         product_id = cur.lastrowid
 
@@ -133,7 +139,7 @@ def get_latest_prices(brand: str = None, category: str = None):
 
     query = """
         SELECT p.id, p.brand, p.product_name, p.size, p.url, p.category,
-               p.first_seen, p.last_seen,
+               p.image_url, p.first_seen, p.last_seen,
                ph.price, ph.regular_price, ph.sale_price, ph.date_scraped
         FROM products p
         LEFT JOIN price_history ph ON ph.id = (

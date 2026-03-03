@@ -1,10 +1,32 @@
 """Streamlit dashboard for the Best Ever Competitor Pricing Tracker."""
 
+import math
+import re
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 
 from database import get_brands_summary, get_latest_prices, get_price_history, init_db
+
+_SIZE_RE = re.compile(r"([\d.]+)\s*(ml|mL|ML|l|L|fl\s*oz|oz|g|kg)\b", re.IGNORECASE)
+
+def _size_to_ml(size_str: str) -> str:
+    """Convert a size string to milliliters."""
+    if not size_str:
+        return ""
+    m = _SIZE_RE.search(size_str)
+    if not m:
+        return size_str
+    value = float(m.group(1))
+    unit = m.group(2).lower().replace(" ", "")
+    if unit in ("ml",):
+        return f"{int(value)} ml"
+    if unit in ("l",):
+        return f"{int(value * 1000)} ml"
+    if unit in ("floz", "oz"):
+        return f"{int(round(value * 29.5735))} ml"
+    return size_str
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -100,21 +122,91 @@ with tab_overview:
     c3.metric("Avg Price", f"${avg_price:.2f}")
     c4.metric("Last Scraped", str(last_scraped)[:16] if last_scraped != "N/A" else last_scraped)
 
-    st.subheader("Price Table")
+    # --- Search & Sort controls ---
+    ctrl1, ctrl2 = st.columns([3, 1])
+    with ctrl1:
+        search_query = st.text_input("Search products", placeholder="Search by name, brand, category, size...")
+    with ctrl2:
+        sort_option = st.selectbox("Sort by", ["Brand", "Product Name", "Price Low-High", "Price High-Low"])
 
-    display_cols = ["brand", "product_name", "category", "size", "price", "regular_price", "sale_price"]
-    display_cols = [c for c in display_cols if c in df.columns]
+    # Apply search filter
+    card_df = df.copy()
+    if search_query:
+        q = search_query.lower()
+        mask = False
+        for col in ["product_name", "brand", "category", "size"]:
+            if col in card_df.columns:
+                mask = mask | card_df[col].fillna("").str.lower().str.contains(q, na=False)
+        card_df = card_df[mask]
 
-    st.dataframe(
-        df[display_cols].sort_values(["brand", "product_name"]),
-        use_container_width=True,
-        column_config={
-            "price": st.column_config.NumberColumn("Price", format="$%.2f"),
-            "regular_price": st.column_config.NumberColumn("Regular", format="$%.2f"),
-            "sale_price": st.column_config.NumberColumn("Sale", format="$%.2f"),
-        },
-        hide_index=True,
-    )
+    # Apply sort
+    if sort_option == "Price Low-High":
+        card_df = card_df.sort_values("price", ascending=True, na_position="last")
+    elif sort_option == "Price High-Low":
+        card_df = card_df.sort_values("price", ascending=False, na_position="last")
+    elif sort_option == "Brand":
+        card_df = card_df.sort_values(["brand", "product_name"])
+    else:
+        card_df = card_df.sort_values("product_name")
+
+    if card_df.empty:
+        st.info("No products match your search.")
+    else:
+        # --- Pagination ---
+        per_page = 24
+        total_pages = math.ceil(len(card_df) / per_page)
+        page = st.number_input("Page", min_value=1, max_value=max(total_pages, 1), value=1, step=1)
+
+        start_idx = (page - 1) * per_page
+        page_df = card_df.iloc[start_idx : start_idx + per_page]
+
+        st.caption(f"Showing {start_idx + 1}–{min(start_idx + per_page, len(card_df))} of {len(card_df)} products")
+
+        # --- Placeholder SVG for missing images ---
+        PLACEHOLDER_IMG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Crect width='120' height='120' fill='%23e0e0e0'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%23999' font-size='14'%3ENo Image%3C/text%3E%3C/svg%3E"
+
+        # --- Render product cards in a 4-column grid ---
+        rows_on_page = [page_df.iloc[i : i + 4] for i in range(0, len(page_df), 4)]
+
+        for row_chunk in rows_on_page:
+            cols = st.columns(4)
+            for idx, (_, product) in enumerate(row_chunk.iterrows()):
+                with cols[idx]:
+                    img_src = product.get("image_url") or PLACEHOLDER_IMG
+
+                    # Build price HTML
+                    price_val = product.get("price")
+                    sale_val = product.get("sale_price")
+                    if pd.notna(sale_val) and sale_val:
+                        reg_display = f"${price_val:.2f}" if pd.notna(price_val) else ""
+                        price_html = (
+                            f'<span style="text-decoration:line-through;color:#888;font-size:0.9em;">{reg_display}</span> '
+                            f'<span style="color:#d32f2f;font-weight:bold;font-size:1.1em;">${sale_val:.2f}</span>'
+                        )
+                    elif pd.notna(price_val):
+                        price_html = f'<span style="font-weight:bold;font-size:1.1em;">${price_val:.2f}</span>'
+                    else:
+                        price_html = '<span style="color:#888;">Price N/A</span>'
+
+                    brand_name = product.get("brand", "")
+                    prod_name = product.get("product_name", "")
+                    size = _size_to_ml(product.get("size") or "")
+                    category = product.get("category") or ""
+
+                    card_html = f"""
+                    <div style="border:1px solid #e0e0e0;border-radius:10px;padding:12px;text-align:center;margin-bottom:12px;background:#fafafa;min-height:320px;">
+                        <img src="{img_src}" alt="{prod_name}" style="width:120px;height:120px;object-fit:contain;margin-bottom:8px;border-radius:6px;" />
+                        <div style="color:#666;font-size:0.8em;text-transform:uppercase;letter-spacing:0.5px;">{brand_name}</div>
+                        <div style="font-weight:600;font-size:0.95em;margin:4px 0;min-height:40px;line-height:1.3;">{prod_name}</div>
+                        <div style="color:#888;font-size:0.8em;">{size}</div>
+                        <div style="margin:8px 0;">{price_html}</div>
+                        <span style="background:#e3f2fd;color:#1565c0;font-size:0.75em;padding:2px 8px;border-radius:12px;">{category}</span>
+                    </div>
+                    """
+                    st.html(card_html)
+
+        # Page indicator at bottom
+        st.caption(f"Page {page} of {total_pages}")
 
 # ===== TAB 2 — Brand Comparison =====
 with tab_compare:
@@ -165,7 +257,7 @@ with tab_compare:
             color="brand",
             labels={"brand": "Brand", "price": "Price ($)"},
         )
-        fig_box.update_layout(showlegend=False)
+        fig_box.update_layout(showlegend=False, yaxis=dict(range=[0, 100]))
         st.plotly_chart(fig_box, use_container_width=True)
 
 # ===== TAB 3 — Price History =====
