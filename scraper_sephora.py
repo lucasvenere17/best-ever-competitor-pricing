@@ -61,20 +61,26 @@ def _click_show_more(driver) -> bool:
                 if btn.is_displayed():
                     driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
                     time.sleep(0.5)
-                    btn.click()
+                    try:
+                        btn.click()
+                    except Exception:
+                        driver.execute_script("arguments[0].click();", btn)
                     return True
             except NoSuchElementException:
                 continue
 
-        # Fallback: find button by text content
+        # Fallback: find button by text content ("Show More Products")
         buttons = driver.find_elements(By.TAG_NAME, "button")
         for btn in buttons:
             try:
                 txt = btn.text.strip().lower()
-                if "show more" in txt and btn.is_displayed():
+                if "show more products" in txt and btn.is_displayed():
                     driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
                     time.sleep(0.5)
-                    btn.click()
+                    try:
+                        btn.click()
+                    except Exception:
+                        driver.execute_script("arguments[0].click();", btn)
                     return True
             except Exception:
                 continue
@@ -118,57 +124,65 @@ def _extract_products_from_page(driver, brand_name: str) -> list[dict]:
             if not href.startswith("http"):
                 href = BASE_URL + href
 
-            # Walk up to the product card container
-            card = link
-            for _ in range(6):
-                parent = card.find_element(By.XPATH, "..")
-                children = parent.find_elements(By.CSS_SELECTOR, 'a[href*="/product/"]')
-                if len(children) > 1:
-                    break
-                card = parent
+            # On Sephora, the <a> tag IS the card — its text contains everything.
+            # .text returns newline-separated lines; textContent returns one blob.
+            link_text = link.text or ""
+            used_inner_text = bool(link_text.strip())
+            if not used_inner_text:
+                link_text = driver.execute_script("return arguments[0].innerText || arguments[0].textContent || '';", link)
+            lines = [l.strip() for l in link_text.split("\n") if l.strip()]
 
-            card_text = card.text or ""
-            lines = [l.strip() for l in card_text.split("\n") if l.strip()]
+            # Extract product name using data attribute (most reliable)
+            name = link.get_attribute("data-cnstrc-item-name") or ""
 
-            # Need at least brand + name + price
-            if len(lines) < 3:
-                continue
+            # Fallback: parse from lines (line 0 = brand, line 1 = name)
+            if not name and len(lines) >= 2:
+                name = lines[1]
 
-            # Line 0 = brand, Line 1 = product name
-            name = lines[1]
             if not name:
                 continue
 
-            # Find the price line (first line containing '$')
+            # Extract price — from data attribute or text
             price = None
             regular_price = None
             sale_price = None
 
-            for line in lines:
-                if "$" not in line:
-                    continue
-                # Handle range format "$49.00 - $99.00" (size variants) — take the lower price
-                if " - " in line:
-                    parts = line.split(" - ")
-                    low = parse_price(parts[0])
-                    high = parse_price(parts[1]) if len(parts) > 1 else None
+            data_price = link.get_attribute("data-cnstrc-item-price") or ""
+            if data_price:
+                # Format: "27.00 - $67.50" or "35.00"
+                if " - " in data_price:
+                    low = parse_price(data_price.split(" - ")[0])
                     price = low
                     regular_price = low
                 else:
-                    price = parse_price(line)
+                    price = parse_price(data_price)
                     regular_price = price
-                break  # only use the first price line
+            else:
+                # Fallback: scan lines for $ sign
+                for line in lines:
+                    if "$" not in line:
+                        continue
+                    if "value" in line.lower():
+                        continue
+                    if " - " in line:
+                        low = parse_price(line.split(" - ")[0])
+                        price = low
+                        regular_price = low
+                    else:
+                        price = parse_price(line)
+                        regular_price = price
+                    break
 
-            # Image
+            # Image — look inside the link element
             image_url = None
             try:
-                img = card.find_element(By.TAG_NAME, "img")
+                img = link.find_element(By.TAG_NAME, "img")
                 image_url = img.get_attribute("src")
             except Exception:
                 pass
 
-            # Size — extract from product name or card text
-            size = extract_size(name) or extract_size(card_text)
+            # Size — extract from product name or full text
+            size = extract_size(name) or extract_size(link_text)
 
             products.append({
                 "brand": brand_name,
@@ -203,12 +217,36 @@ def scrape_brand(driver, brand_name: str, brand_slug: str) -> int:
         dump_page(driver, f"sephora_{brand_name}_blocked")
         return 0
 
-    # Scroll and click "Show More" to load all products
-    for click_num in range(MAX_SHOW_MORE_CLICKS):
-        # Scroll to bottom to trigger lazy loading
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight)")
-        time.sleep(1.5)
+    # Dismiss cookie consent banner if present (blocks clicks otherwise)
+    try:
+        driver.execute_script("""
+            // Remove Clarip/CookieConsent banner
+            var banner = document.querySelector('[aria-label*="Cookie Consent"]') ||
+                         document.querySelector('.cc-window') ||
+                         document.querySelector('.cc-banner');
+            if (banner) banner.remove();
+            // Click any dismiss/accept buttons that might exist
+            var btns = document.querySelectorAll('.cc-btn, .cc-dismiss, .cc-allow');
+            btns.forEach(function(b) { try { b.click(); } catch(e) {} });
+        """)
+        time.sleep(0.5)
+    except Exception:
+        pass
 
+    # Scroll down gradually to trigger lazy loading of all products
+    # Using scrollBy instead of scrollTo(bottom) — Sephora's lazy load
+    # needs the viewport to pass through each section
+    for _ in range(30):
+        driver.execute_script("window.scrollBy(0, window.innerHeight)")
+        time.sleep(1)
+        at_bottom = driver.execute_script(
+            "return (window.scrollY + window.innerHeight) >= document.body.scrollHeight - 50"
+        )
+        if at_bottom:
+            break
+
+    # Click "Show More" to load additional product batches
+    for click_num in range(MAX_SHOW_MORE_CLICKS):
         if not _click_show_more(driver):
             log.info("  No more 'Show More' button after %d click(s)", click_num)
             break
@@ -217,10 +255,16 @@ def scrape_brand(driver, brand_name: str, brand_slug: str) -> int:
         time.sleep(3)
         human_delay(MIN_DELAY, MAX_DELAY)
 
-    # Final scroll to ensure everything is loaded
-    for _ in range(3):
+    # Scroll back to top, then slowly down — re-triggers lazy load for all products
+    driver.execute_script("window.scrollTo(0, 0)")
+    time.sleep(1)
+    for _ in range(20):
         driver.execute_script("window.scrollBy(0, window.innerHeight)")
         time.sleep(0.8)
+        new_h = driver.execute_script("return window.scrollY + window.innerHeight")
+        total_h = driver.execute_script("return document.body.scrollHeight")
+        if new_h >= total_h:
+            break
 
     # Extract products
     products = _extract_products_from_page(driver, brand_name)
