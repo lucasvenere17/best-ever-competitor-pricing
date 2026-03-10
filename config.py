@@ -76,6 +76,29 @@ SEPHORA_CONFIG = {
 }
 
 # ---------------------------------------------------------------------------
+# Walmart
+# ---------------------------------------------------------------------------
+WALMART_CONFIG = {
+    "retailer": "Walmart",
+    "base_url": "https://www.walmart.ca",
+    "brands": {
+        "Monday":       {"url": "https://www.walmart.ca/search?q=Monday+haircare+shampoo+conditioner", "keywords": ["monday"]},
+        "Maui":         {"url": "https://www.walmart.ca/search?q=Maui+Moisture+shampoo+conditioner", "keywords": ["maui"]},
+        "Native":       {"url": "https://www.walmart.ca/search?q=Native+shampoo+conditioner+hair", "keywords": ["native"]},
+        "Kristin Ess":  {"url": "https://www.walmart.ca/search?q=Kristin+Ess+hair", "keywords": ["kristin"]},
+        "OGX":          {"url": "https://www.walmart.ca/search?q=OGX+shampoo+conditioner", "keywords": ["ogx"]},
+        "Marc Anthony":  {"url": "https://www.walmart.ca/search?q=Marc+Anthony+hair", "keywords": ["marc anthony", "marc-anthony"]},
+        "John Frieda":  {"url": "https://www.walmart.ca/search?q=John+Frieda+shampoo+conditioner", "keywords": ["john frieda", "john-frieda"]},
+        "Nexxus":       {"url": "https://www.walmart.ca/search?q=Nexxus+shampoo+conditioner", "keywords": ["nexxus"]},
+        "L'Oreal Ever": {"url": "https://www.walmart.ca/search?q=L%27Oreal+EverPure+hair", "keywords": ["loreal", "l'oreal", "everpure"]},
+    },
+    "min_delay": 5,
+    "max_delay": 10,
+    "brand_delay_min": 10,
+    "brand_delay_max": 18,
+}
+
+# ---------------------------------------------------------------------------
 # Backward compatibility — flat exports used by scraper_sdm.py
 # ---------------------------------------------------------------------------
 BASE_URL = SDM_CONFIG["base_url"]

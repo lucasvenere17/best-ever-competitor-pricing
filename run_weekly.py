@@ -13,6 +13,7 @@ MARKER_DIR = os.path.join(os.path.dirname(__file__), "data")
 SCRAPERS = [
     {"name": "Shoppers Drug Mart", "marker": ".last_scrape_week_sdm", "module": "scraper_sdm"},
     {"name": "Sephora", "marker": ".last_scrape_week_sephora", "module": "scraper_sephora"},
+    {"name": "Walmart", "marker": ".last_scrape_week_walmart", "module": "scraper_walmart"},
 ]
 
 

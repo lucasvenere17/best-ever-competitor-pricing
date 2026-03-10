@@ -1,5 +1,6 @@
 """SQLite database layer for the Best Ever Competitor Pricing Tracker."""
 
+import re
 import sqlite3
 import os
 from datetime import datetime, timedelta
@@ -84,8 +85,71 @@ def init_db():
 
     cur.execute("CREATE INDEX IF NOT EXISTS idx_products_retailer ON products(retailer)")
 
+    # Migration: add product_group column for cross-retailer matching
+    try:
+        cur.execute("ALTER TABLE products ADD COLUMN product_group TEXT")
+    except sqlite3.OperationalError:
+        pass  # column already exists
+
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_products_product_group ON products(product_group)")
+
     conn.commit()
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Product group matching — links the same product across retailers
+# ---------------------------------------------------------------------------
+
+def _normalize_name(brand: str, product_name: str) -> str:
+    """Normalize a product name for cross-retailer matching.
+
+    Strips the brand prefix, lowercases, removes special chars, and collapses whitespace.
+    """
+    name = product_name.lower()
+    # Remove brand name from the start (retailers often prefix it)
+    brand_lower = brand.lower()
+    if name.startswith(brand_lower):
+        name = name[len(brand_lower):]
+    # Remove common retailer-specific suffixes/prefixes
+    for noise in ["- hair care", "- haircare", "hair care -", "(hair)", "hair -"]:
+        name = name.replace(noise, "")
+    # Remove non-alphanumeric (keep spaces)
+    name = re.sub(r"[^a-z0-9\s]", "", name)
+    # Collapse whitespace
+    name = re.sub(r"\s+", " ", name).strip()
+    return name
+
+
+def _normalize_size(size: str) -> str:
+    """Normalize a size string for matching (e.g., '385 mL' -> '385ml')."""
+    if not size:
+        return ""
+    s = size.lower().replace(" ", "")
+    # Normalize fl oz variants
+    s = re.sub(r"fl\.?oz", "floz", s)
+    return s
+
+
+def compute_product_group(brand: str, product_name: str, size: str = None) -> str:
+    """Compute a product_group key from brand + normalized name + size."""
+    norm_name = _normalize_name(brand, product_name)
+    norm_size = _normalize_size(size or "")
+    return f"{brand.lower()}|{norm_name}|{norm_size}"
+
+
+def refresh_product_groups():
+    """Recompute product_group for all products in the database."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id, brand, product_name, size FROM products")
+    rows = cur.fetchall()
+    for row in rows:
+        group = compute_product_group(row["brand"], row["product_name"], row["size"])
+        cur.execute("UPDATE products SET product_group = ? WHERE id = ?", (group, row["id"]))
+    conn.commit()
+    conn.close()
+    return len(rows)
 
 
 def upsert_product(brand: str, product_name: str, url: str, size: str = None, category: str = None, image_url: str = None, retailer: str = "Shoppers Drug Mart") -> int:
@@ -104,16 +168,18 @@ def upsert_product(brand: str, product_name: str, url: str, size: str = None, ca
     cur.execute("SELECT id FROM products WHERE url = ?", (url,))
     row = cur.fetchone()
 
+    product_group = compute_product_group(brand, product_name, size)
+
     if row:
         product_id = row["id"]
         cur.execute(
-            "UPDATE products SET last_seen = ?, size = COALESCE(?, size), category = COALESCE(?, category), image_url = COALESCE(?, image_url), retailer = ? WHERE id = ?",
-            (now, size, category, image_url, retailer, product_id),
+            "UPDATE products SET last_seen = ?, size = COALESCE(?, size), category = COALESCE(?, category), image_url = COALESCE(?, image_url), retailer = ?, product_group = ? WHERE id = ?",
+            (now, size, category, image_url, retailer, product_group, product_id),
         )
     else:
         cur.execute(
-            "INSERT INTO products (brand, product_name, size, url, category, image_url, retailer, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (brand, product_name, size, url, category, image_url, retailer, now, now),
+            "INSERT INTO products (brand, product_name, size, url, category, image_url, retailer, product_group, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (brand, product_name, size, url, category, image_url, retailer, product_group, now, now),
         )
         product_id = cur.lastrowid
 
@@ -147,7 +213,7 @@ def get_latest_prices(brand: str = None, category: str = None, retailer: str = N
 
     query = """
         SELECT p.id, p.brand, p.product_name, p.size, p.url, p.category,
-               p.image_url, p.retailer, p.first_seen, p.last_seen,
+               p.image_url, p.retailer, p.product_group, p.first_seen, p.last_seen,
                ph.price, ph.regular_price, ph.sale_price, ph.date_scraped
         FROM products p
         LEFT JOIN price_history ph ON ph.id = (
