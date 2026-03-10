@@ -89,6 +89,13 @@ if df_all.empty:
     st.warning("No data yet. Run `python scraper.py` first to populate the database.")
     st.stop()
 
+# Retailer filter (only show if multiple retailers exist)
+all_retailers = sorted(df_all["retailer"].dropna().unique()) if "retailer" in df_all.columns else ["Shoppers Drug Mart"]
+if len(all_retailers) > 1:
+    selected_retailers = st.sidebar.multiselect("Retailers", all_retailers, default=all_retailers)
+else:
+    selected_retailers = all_retailers
+
 all_brands = sorted(df_all["brand"].unique())
 all_categories = sorted(df_all["category"].dropna().unique())
 
@@ -96,8 +103,10 @@ selected_brands = st.sidebar.multiselect("Brands", all_brands, default=all_brand
 selected_categories = st.sidebar.multiselect("Categories", all_categories, default=all_categories)
 
 # Apply filters
+retailer_mask = df_all["retailer"].isin(selected_retailers) if "retailer" in df_all.columns else True
 df = df_all[
-    df_all["brand"].isin(selected_brands)
+    retailer_mask
+    & df_all["brand"].isin(selected_brands)
     & df_all["category"].isin(selected_categories)
 ].copy()
 
@@ -118,14 +127,14 @@ if os.path.exists(logo_path):
             <img src="data:image/png;base64,{logo_b64}" alt="Best Ever" style="height:48px;" />
             <div>
                 <div style="color:white;font-size:1.4em;font-weight:700;letter-spacing:0.5px;">Competitor Pricing Tracker</div>
-                <div style="color:rgba(255,255,255,0.8);font-size:0.85em;">Hair care prices on Shoppers Drug Mart</div>
+                <div style="color:rgba(255,255,255,0.8);font-size:0.85em;">Hair care prices across retailers</div>
             </div>
         </div>
     </div>
     """)
 else:
     st.title("Best Ever Competitor Pricing Tracker")
-    st.caption("Hair care competitor prices on Shoppers Drug Mart")
+    st.caption("Hair care competitor prices across retailers")
 
 # ---------------------------------------------------------------------------
 # Tabs
@@ -251,13 +260,14 @@ with tab_overview:
                     prod_name = product.get("product_name", "")
                     size = _size_to_ml(product.get("size") or "")
                     category = product.get("category") or ""
+                    retailer = product.get("retailer") or ""
 
                     # Check if product is new (first seen within last 7 days)
                     is_new = False
                     first_seen = product.get("first_seen")
                     if first_seen and str(first_seen) > new_cutoff:
                         is_new = True
-                    new_badge = '<span style="background:#C6858F;color:white;font-size:0.7em;font-weight:bold;padding:2px 8px;border-radius:4px;position:absolute;top:8px;right:8px;">NEW</span>' if is_new else ""
+                    new_badge = '<span style="background:#E53935;color:white;font-size:0.7em;font-weight:bold;padding:2px 8px;border-radius:4px;position:absolute;top:8px;right:8px;">NEW</span>' if is_new else ""
 
                     card_html = f"""
                     <div style="border:1px solid #DDD6CD;border-radius:10px;padding:12px;text-align:center;margin-bottom:12px;background:white;min-height:320px;position:relative;">
@@ -268,6 +278,7 @@ with tab_overview:
                         <div style="color:#ACA399;font-size:0.8em;">{size}</div>
                         <div style="margin:8px 0;">{price_html}</div>
                         <span style="background:#809C85;color:white;font-size:0.75em;padding:2px 8px;border-radius:12px;">{category}</span>
+                        <span style="background:#7A99AC;color:white;font-size:0.7em;padding:2px 8px;border-radius:12px;margin-left:4px;">{retailer}</span>
                     </div>
                     """
                     st.html(card_html)

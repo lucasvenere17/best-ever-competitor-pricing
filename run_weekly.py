@@ -1,22 +1,32 @@
-"""Run the scraper if it hasn't been run this week yet.
+"""Run scrapers if they haven't been run this week yet.
 
 Designed to be triggered at login/startup via Task Scheduler.
-Checks a marker file to avoid duplicate runs within the same week.
+Checks a marker file per retailer to avoid duplicate runs within the same week.
 """
 
 import os
 import sys
 from datetime import datetime
 
-MARKER_FILE = os.path.join(os.path.dirname(__file__), "data", ".last_scrape_week")
+MARKER_DIR = os.path.join(os.path.dirname(__file__), "data")
+
+SCRAPERS = [
+    {"name": "Shoppers Drug Mart", "marker": ".last_scrape_week_sdm", "module": "scraper_sdm"},
+    {"name": "Sephora", "marker": ".last_scrape_week_sephora", "module": "scraper_sephora"},
+]
 
 
-def already_ran_this_week() -> bool:
+def marker_path(marker_file: str) -> str:
+    return os.path.join(MARKER_DIR, marker_file)
+
+
+def already_ran_this_week(marker_file: str) -> bool:
     """Check if the scraper has already run this calendar week."""
-    if not os.path.exists(MARKER_FILE):
+    path = marker_path(marker_file)
+    if not os.path.exists(path):
         return False
     try:
-        with open(MARKER_FILE, "r") as f:
+        with open(path, "r") as f:
             last_week = f.read().strip()
         current_week = datetime.now().strftime("%Y-W%W")
         return last_week == current_week
@@ -24,26 +34,37 @@ def already_ran_this_week() -> bool:
         return False
 
 
-def mark_completed():
+def mark_completed(marker_file: str):
     """Write the current week to the marker file."""
-    os.makedirs(os.path.dirname(MARKER_FILE), exist_ok=True)
-    with open(MARKER_FILE, "w") as f:
+    os.makedirs(MARKER_DIR, exist_ok=True)
+    path = marker_path(marker_file)
+    with open(path, "w") as f:
         f.write(datetime.now().strftime("%Y-W%W"))
 
 
 def main():
-    if already_ran_this_week():
-        print("Scraper already ran this week. Skipping.")
-        return
+    for scraper in SCRAPERS:
+        name = scraper["name"]
+        marker = scraper["marker"]
+        module_name = scraper["module"]
 
-    print(f"Starting weekly scrape at {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        if already_ran_this_week(marker):
+            print(f"{name}: already ran this week. Skipping.")
+            continue
 
-    # Import and run the scraper
-    from scraper import run
-    run()
+        print(f"Starting {name} scrape at {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
-    mark_completed()
-    print("Weekly scrape complete. Marker updated.")
+        try:
+            mod = __import__(module_name)
+            mod.run()
+            mark_completed(marker)
+            print(f"{name}: weekly scrape complete. Marker updated.")
+        except ImportError:
+            print(f"{name}: scraper module '{module_name}' not found yet — skipping.")
+        except Exception as exc:
+            print(f"{name}: error during scrape — {exc}")
+
+    print("All scrapers done.")
 
 
 if __name__ == "__main__":

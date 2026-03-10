@@ -76,11 +76,19 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # column already exists
 
+    # Migration: add retailer column if it doesn't exist yet
+    try:
+        cur.execute("ALTER TABLE products ADD COLUMN retailer TEXT NOT NULL DEFAULT 'Shoppers Drug Mart'")
+    except sqlite3.OperationalError:
+        pass  # column already exists
+
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_products_retailer ON products(retailer)")
+
     conn.commit()
     conn.close()
 
 
-def upsert_product(brand: str, product_name: str, url: str, size: str = None, category: str = None, image_url: str = None) -> int:
+def upsert_product(brand: str, product_name: str, url: str, size: str = None, category: str = None, image_url: str = None, retailer: str = "Shoppers Drug Mart") -> int:
     """Insert a new product or update last_seen if it already exists.
 
     Returns the product id.
@@ -99,13 +107,13 @@ def upsert_product(brand: str, product_name: str, url: str, size: str = None, ca
     if row:
         product_id = row["id"]
         cur.execute(
-            "UPDATE products SET last_seen = ?, size = COALESCE(?, size), category = COALESCE(?, category), image_url = COALESCE(?, image_url) WHERE id = ?",
-            (now, size, category, image_url, product_id),
+            "UPDATE products SET last_seen = ?, size = COALESCE(?, size), category = COALESCE(?, category), image_url = COALESCE(?, image_url), retailer = ? WHERE id = ?",
+            (now, size, category, image_url, retailer, product_id),
         )
     else:
         cur.execute(
-            "INSERT INTO products (brand, product_name, size, url, category, image_url, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (brand, product_name, size, url, category, image_url, now, now),
+            "INSERT INTO products (brand, product_name, size, url, category, image_url, retailer, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (brand, product_name, size, url, category, image_url, retailer, now, now),
         )
         product_id = cur.lastrowid
 
@@ -129,7 +137,7 @@ def insert_price(product_id: int, price: float = None, regular_price: float = No
     conn.close()
 
 
-def get_latest_prices(brand: str = None, category: str = None):
+def get_latest_prices(brand: str = None, category: str = None, retailer: str = None):
     """Get the most recent price for each product.
 
     Returns a list of dicts with product info and latest price data.
@@ -139,7 +147,7 @@ def get_latest_prices(brand: str = None, category: str = None):
 
     query = """
         SELECT p.id, p.brand, p.product_name, p.size, p.url, p.category,
-               p.image_url, p.first_seen, p.last_seen,
+               p.image_url, p.retailer, p.first_seen, p.last_seen,
                ph.price, ph.regular_price, ph.sale_price, ph.date_scraped
         FROM products p
         LEFT JOIN price_history ph ON ph.id = (
@@ -158,6 +166,9 @@ def get_latest_prices(brand: str = None, category: str = None):
     if category:
         query += " AND p.category = ?"
         params.append(category)
+    if retailer:
+        query += " AND p.retailer = ?"
+        params.append(retailer)
 
     query += " ORDER BY p.brand, p.product_name"
 
@@ -205,7 +216,7 @@ def get_price_history(product_id: int = None, days: int = 90):
     return [dict(r) for r in rows]
 
 
-def get_brands_summary():
+def get_brands_summary(retailer: str = None):
     """Get summary statistics per brand.
 
     Returns a list of dicts with brand, product_count, avg_price, min_price, max_price.
@@ -213,9 +224,10 @@ def get_brands_summary():
     conn = get_connection()
     cur = conn.cursor()
 
-    cur.execute("""
+    query = """
         SELECT
             p.brand,
+            p.retailer,
             COUNT(DISTINCT p.id) AS product_count,
             ROUND(AVG(ph.price), 2) AS avg_price,
             ROUND(MIN(ph.price), 2) AS min_price,
@@ -227,9 +239,14 @@ def get_brands_summary():
             ORDER BY ph2.date_scraped DESC
             LIMIT 1
         )
-        GROUP BY p.brand
-        ORDER BY p.brand
-    """)
+    """
+    params = []
+    if retailer:
+        query += " WHERE p.retailer = ?"
+        params.append(retailer)
+    query += " GROUP BY p.brand, p.retailer ORDER BY p.brand"
+
+    cur.execute(query, params)
 
     rows = cur.fetchall()
     conn.close()
