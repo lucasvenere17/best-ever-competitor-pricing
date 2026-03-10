@@ -15,6 +15,14 @@ from database import get_brands_summary, get_latest_prices, get_price_history, i
 
 ASSETS_DIR = os.path.join(os.path.dirname(__file__), "assets")
 
+# Load retailer logo SVGs as base64 data URIs
+_RETAILER_LOGOS = {}
+for _logo_file, _retailer_key in [("sephora_logo.svg", "Sephora"), ("sdm_logo.svg", "Shoppers Drug Mart")]:
+    _logo_path = os.path.join(ASSETS_DIR, _logo_file)
+    if os.path.exists(_logo_path):
+        with open(_logo_path, "rb") as _f:
+            _RETAILER_LOGOS[_retailer_key] = "data:image/svg+xml;base64," + base64.b64encode(_f.read()).decode()
+
 _SIZE_RE = re.compile(r"(\d+\.?\d*)\s*(ml|mL|ML|l|L|fl\s*oz|oz|g|kg)\b", re.IGNORECASE)
 
 def _size_to_ml(size_str: str) -> str:
@@ -278,7 +286,7 @@ with tab_overview:
                         <div style="color:#ACA399;font-size:0.8em;">{size}</div>
                         <div style="margin:8px 0;">{price_html}</div>
                         <span style="background:#809C85;color:white;font-size:0.75em;padding:2px 8px;border-radius:12px;">{category}</span>
-                        <span style="background:#7A99AC;color:white;font-size:0.7em;padding:2px 8px;border-radius:12px;margin-left:4px;">{retailer}</span>
+                        <br/><img src="{_RETAILER_LOGOS.get(retailer, '')}" alt="{retailer}" style="height:18px;margin-top:6px;border-radius:3px;" />
                     </div>
                     """
                     st.html(card_html)
