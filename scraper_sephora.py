@@ -86,17 +86,28 @@ def _click_show_more(driver) -> bool:
 
 
 def _extract_products_from_page(driver, brand_name: str) -> list[dict]:
-    """Parse all product data from the currently loaded page."""
+    """Parse all product data from the currently loaded page.
+
+    Sephora card text structure (one line per element):
+        [0] Brand name (e.g. "Olaplex")
+        [1] Product name
+        [2] Review count (e.g. "282", "2.2K") — skip this
+        [3] Price (e.g. "$49.00", "$49.00 - $99.00" for size variants)
+        [4+] Optional badges: "NEW", "LIMITED EDITION", etc.
+    """
     products = []
 
     # Find all product links — most stable selector on Sephora's React SPA
     product_links = driver.find_elements(By.CSS_SELECTOR, 'a[href*="/product/"]')
 
-    # Deduplicate by href (multiple <a> tags can point to the same product)
+    # Deduplicate by href
     seen_hrefs = set()
     unique_cards = []
     for link in product_links:
         href = link.get_attribute("href") or ""
+        # Skip non-product links (e.g. subscription promo)
+        if "/product/subscription" in href.lower():
+            continue
         if href and href not in seen_hrefs:
             seen_hrefs.add(href)
             unique_cards.append(link)
@@ -108,62 +119,45 @@ def _extract_products_from_page(driver, brand_name: str) -> list[dict]:
                 href = BASE_URL + href
 
             # Walk up to the product card container
-            # Sephora wraps each product in a parent div; we go up a few levels
             card = link
-            for _ in range(5):
+            for _ in range(6):
                 parent = card.find_element(By.XPATH, "..")
-                # Stop if parent is too large (likely the grid itself)
                 children = parent.find_elements(By.CSS_SELECTOR, 'a[href*="/product/"]')
                 if len(children) > 1:
                     break
                 card = parent
 
-            # Product name — text of the link itself, or nearby elements
-            name = ""
-            try:
-                name = link.text.strip()
-            except Exception:
-                pass
-            if not name:
-                # Try getting text from the card container
-                card_text = card.text or ""
-                lines = [l.strip() for l in card_text.split("\n") if l.strip()]
-                # Usually: brand, product name, price — skip brand line
-                if len(lines) >= 2:
-                    name = lines[1]
-                elif lines:
-                    name = lines[0]
-
-            if not name:
-                continue
-
-            # Price — look for text with dollar signs in the card
             card_text = card.text or ""
             lines = [l.strip() for l in card_text.split("\n") if l.strip()]
 
+            # Need at least brand + name + price
+            if len(lines) < 3:
+                continue
+
+            # Line 0 = brand, Line 1 = product name
+            name = lines[1]
+            if not name:
+                continue
+
+            # Find the price line (first line containing '$')
             price = None
             regular_price = None
             sale_price = None
 
-            # Look for price lines (contain '$')
-            price_lines = [l for l in lines if "$" in l]
-            if price_lines:
-                # If multiple prices, first is usually regular, second is sale
-                prices_found = []
-                for pl in price_lines:
-                    p = parse_price(pl)
-                    if p:
-                        prices_found.append(p)
-
-                if len(prices_found) == 1:
-                    price = prices_found[0]
+            for line in lines:
+                if "$" not in line:
+                    continue
+                # Handle range format "$49.00 - $99.00" (size variants) — take the lower price
+                if " - " in line:
+                    parts = line.split(" - ")
+                    low = parse_price(parts[0])
+                    high = parse_price(parts[1]) if len(parts) > 1 else None
+                    price = low
+                    regular_price = low
+                else:
+                    price = parse_price(line)
                     regular_price = price
-                elif len(prices_found) >= 2:
-                    # Higher is regular, lower is sale
-                    prices_found.sort(reverse=True)
-                    regular_price = prices_found[0]
-                    sale_price = prices_found[1]
-                    price = regular_price
+                break  # only use the first price line
 
             # Image
             image_url = None
@@ -173,7 +167,7 @@ def _extract_products_from_page(driver, brand_name: str) -> list[dict]:
             except Exception:
                 pass
 
-            # Size — try to extract from product name or card text
+            # Size — extract from product name or card text
             size = extract_size(name) or extract_size(card_text)
 
             products.append({
@@ -268,6 +262,15 @@ def run():
     log.info("Starting Sephora scraper for %d brands", len(BRANDS))
 
     driver = create_chrome_driver()
+    time.sleep(3)  # let Chrome fully initialize
+
+    # Warm up with a neutral page to establish a normal browsing session
+    # before hitting Sephora (helps avoid Akamai bot detection)
+    try:
+        driver.get("https://www.google.com")
+        time.sleep(3)
+    except Exception:
+        pass
 
     try:
         grand_total = 0
