@@ -48,7 +48,7 @@ def push_to_github():
     """Commit and push the updated pricing database to GitHub."""
     repo_dir = os.path.dirname(__file__)
     try:
-        subprocess.run(["git", "add", "data/pricing.db"], cwd=repo_dir, check=True)
+        subprocess.run(["git", "add", "-f", "data/pricing.db"], cwd=repo_dir, check=True)
         result = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=repo_dir)
         if result.returncode == 0:
             print("No database changes to push.")

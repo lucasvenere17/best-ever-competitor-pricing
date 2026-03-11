@@ -17,6 +17,20 @@ CATEGORY_KEYWORDS = {
 }
 
 
+# Keywords that indicate a product is a tool/accessory, not a hair care product
+EXCLUDED_KEYWORDS = [
+    "brush", "comb", "iron", "dryer", "blow dryer", "diffuser", "roller",
+    "clip", "towel", "pillowcase", "scrunchie", "headband", "dermaroller",
+    "deodorant",
+]
+
+
+def is_excluded_product(product_name: str) -> bool:
+    """Return True if the product is a tool/accessory that should be skipped."""
+    name_lower = product_name.lower()
+    return any(kw in name_lower for kw in EXCLUDED_KEYWORDS)
+
+
 def infer_category(product_name: str) -> str:
     """Infer product category from the product name."""
     name_lower = product_name.lower()
@@ -157,6 +171,9 @@ def upsert_product(brand: str, product_name: str, url: str, size: str = None, ca
 
     Returns the product id.
     """
+    if is_excluded_product(product_name):
+        return None
+
     if category is None:
         category = infer_category(product_name)
 

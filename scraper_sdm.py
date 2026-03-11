@@ -192,6 +192,8 @@ def scrape_brand(driver, brand_name: str, brand_code: str) -> int:
                     image_url=image_url,
                     retailer=RETAILER,
                 )
+                if product_id is None:
+                    continue
                 insert_price(
                     product_id=product_id,
                     price=price,
