@@ -5,6 +5,7 @@ Checks a marker file per retailer to avoid duplicate runs within the same week.
 """
 
 import os
+import subprocess
 import sys
 from datetime import datetime
 
@@ -43,6 +44,26 @@ def mark_completed(marker_file: str):
         f.write(datetime.now().strftime("%Y-W%W"))
 
 
+def push_to_github():
+    """Commit and push the updated pricing database to GitHub."""
+    repo_dir = os.path.dirname(__file__)
+    try:
+        subprocess.run(["git", "add", "data/pricing.db"], cwd=repo_dir, check=True)
+        result = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=repo_dir)
+        if result.returncode == 0:
+            print("No database changes to push.")
+            return
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        subprocess.run(
+            ["git", "commit", "-m", f"Update pricing data {date_str}"],
+            cwd=repo_dir, check=True,
+        )
+        subprocess.run(["git", "push"], cwd=repo_dir, check=True)
+        print("Pricing data pushed to GitHub — live dashboard will update shortly.")
+    except subprocess.CalledProcessError as exc:
+        print(f"Git push failed: {exc}")
+
+
 def main():
     for scraper in SCRAPERS:
         name = scraper["name"]
@@ -66,6 +87,9 @@ def main():
             print(f"{name}: error during scrape — {exc}")
 
     print("All scrapers done.")
+
+    # Auto-push updated database to GitHub so the live dashboard updates
+    push_to_github()
 
 
 if __name__ == "__main__":
