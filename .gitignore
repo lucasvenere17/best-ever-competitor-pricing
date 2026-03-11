@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 data/
+!data/pricing.db
 debug/
 scraper.log
 .env

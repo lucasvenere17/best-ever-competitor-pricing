@@ -186,6 +186,7 @@ def _build_card_html(group_rows, new_cutoff, selected_retailers):
     prod_name = primary.get("product_name", "")
     size = _size_to_ml(primary.get("size") or "")
     category = primary.get("category") or ""
+    primary_url = primary.get("url") or ""
 
     # New badge
     is_new = False
@@ -209,6 +210,7 @@ def _build_card_html(group_rows, new_cutoff, selected_retailers):
     price_rows_html = ""
     for _, r in group_rows.iterrows():
         ret = r["retailer"]
+        row_url = r.get("url") or ""
         logo_src = _RETAILER_LOGOS.get(ret, "")
         is_lowest = ret in lowest_retailers and len(prices) > 1
         p_html = _price_html(r.get("price"), r.get("sale_price"), is_lowest=is_lowest)
@@ -217,19 +219,37 @@ def _build_card_html(group_rows, new_cutoff, selected_retailers):
         opacity = "1" if ret in selected_retailers else "0.4"
 
         logo_img = f'<img src="{logo_src}" alt="{ret}" style="height:16px;border-radius:2px;" />' if logo_src else f'<span style="font-size:0.7em;color:#888;">{ret}</span>'
-        price_rows_html += f'''
+
+        # Wrap each retailer row in a link to that retailer's product page
+        if row_url:
+            price_rows_html += f'''
+            <a href="{row_url}" target="_blank" rel="noopener" style="text-decoration:none;display:flex;align-items:center;justify-content:space-between;padding:3px 0;opacity:{opacity};border-radius:4px;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='transparent'">
+                {logo_img}
+                {p_html}
+            </a>
+            '''
+        else:
+            price_rows_html += f'''
             <div style="display:flex;align-items:center;justify-content:space-between;padding:3px 0;opacity:{opacity};">
                 {logo_img}
                 {p_html}
             </div>
-        '''
+            '''
+
+    # Wrap image and product name in a link to the primary product page
+    if primary_url:
+        img_html = f'<a href="{primary_url}" target="_blank" rel="noopener"><img src="{img_src}" alt="{prod_name}" style="width:120px;height:120px;object-fit:contain;margin-bottom:8px;border-radius:6px;" /></a>'
+        name_html = f'<a href="{primary_url}" target="_blank" rel="noopener" style="color:#1A1A1A;text-decoration:none;" onmouseover="this.style.textDecoration=\'underline\'" onmouseout="this.style.textDecoration=\'none\'"><div style="font-weight:600;font-size:0.95em;margin:4px 0;min-height:40px;line-height:1.3;">{prod_name}</div></a>'
+    else:
+        img_html = f'<img src="{img_src}" alt="{prod_name}" style="width:120px;height:120px;object-fit:contain;margin-bottom:8px;border-radius:6px;" />'
+        name_html = f'<div style="color:#1A1A1A;font-weight:600;font-size:0.95em;margin:4px 0;min-height:40px;line-height:1.3;">{prod_name}</div>'
 
     return f"""
     <div style="border:1px solid #DDD6CD;border-radius:10px;padding:12px;text-align:center;margin-bottom:12px;background:white;min-height:340px;position:relative;">
         {new_badge}
-        <img src="{img_src}" alt="{prod_name}" style="width:120px;height:120px;object-fit:contain;margin-bottom:8px;border-radius:6px;" />
+        {img_html}
         <div style="color:#ACA399;font-size:0.8em;text-transform:uppercase;letter-spacing:0.5px;">{brand_name}</div>
-        <div style="color:#1A1A1A;font-weight:600;font-size:0.95em;margin:4px 0;min-height:40px;line-height:1.3;">{prod_name}</div>
+        {name_html}
         <div style="color:#ACA399;font-size:0.8em;">{size}</div>
         <div style="margin:8px 4px 6px 4px;text-align:left;">{price_rows_html}</div>
         <span style="background:#809C85;color:white;font-size:0.75em;padding:2px 8px;border-radius:12px;">{category}</span>
